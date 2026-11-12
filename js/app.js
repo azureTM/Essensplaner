@@ -1191,6 +1191,6 @@ async function boot() {
 }
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
-  navigator.serviceWorker.register('sw.js').catch(() => { /* ohne Offline-Start geht es auch */ });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => { /* ohne Offline-Start geht es auch */ });
 }
 boot();
