@@ -326,6 +326,15 @@ const Cloud = (() => {
     uid = data.session ? data.session.user.id : null;
     if (!uid) return { needsGroup: true };
 
+    // Prüfen, ob es den gespeicherten Nutzer auf dem Server noch gibt (z. B. im Dashboard gelöscht).
+    // Bei fehlendem Netz wird die Anmeldung behalten, damit der Offline-Start funktioniert.
+    const check = await sb.auth.getUser();
+    if (check.error && !isNetworkError(check.error)) {
+      await sb.auth.signOut({ scope: 'local' });
+      uid = null;
+      return { needsGroup: true };
+    }
+
     try {
       const { data: m, error } = await sb.from('members').select('group_id').eq('user_id', uid).maybeSingle();
       if (error) throw error;
@@ -377,10 +386,19 @@ const Cloud = (() => {
 
   async function joinGroup(code, name) {
     await ensureUser();
-    const { error } = await sb.rpc('join_group', { group_code: code, member_name: name });
+    let { error } = await sb.rpc('join_group', { group_code: code, member_name: name });
+    // 23503: Den Nutzer gibt es nicht mehr. Dann einmal frisch anmelden und erneut versuchen.
+    if (error && error.code === '23503') {
+      await sb.auth.signOut({ scope: 'local' });
+      uid = null;
+      await ensureUser();
+      ({ error } = await sb.rpc('join_group', { group_code: code, member_name: name }));
+    }
     if (error) throw error;
     return enterGroup();
   }
+
+  const isNetworkError = err => err.name === 'AuthRetryableFetchError' || /fetch|network|Load failed/i.test(String(err.message));
 
   let listening = false;
   function addListeners() {

@@ -1,7 +1,7 @@
 /* Offline-Start: Zuerst wird immer die neueste Version aus dem Netz geholt.
    Nur ohne Verbindung kommt die zuletzt gespeicherte Kopie zum Einsatz.
    Daten von Supabase laufen nicht über diesen Zwischenspeicher. */
-const CACHE = 'essensplan-v2';
+const CACHE = 'essensplan-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/vendor/supabase.js', 'js/config.js', 'js/cloud.js', 'js/planner.js', 'js/data.js', 'js/app.js',
