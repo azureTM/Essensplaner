@@ -23,6 +23,7 @@ In der App gibt es kein Passwort, nur Gruppencode und Namen. Dafür braucht Supa
 1. Links **SQL Editor** öffnen und eine neue Abfrage starten.
 2. Den kompletten Inhalt der Datei `supabase/schema.sql` hineinkopieren.
 3. Auf **Run** klicken. Am Ende sollte „Success“ erscheinen.
+4. In einer **neuen, leeren** Abfrage genauso `supabase/update-2-geraete.sql` ausführen. Damit lassen sich mehrere Geräte zu einer Person verbinden.
 
 ## 4. Zugangsdaten eintragen
 

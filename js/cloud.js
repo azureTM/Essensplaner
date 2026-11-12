@@ -14,6 +14,7 @@ const Cloud = (() => {
   let sb = null;
   let uid = null;
   let groupId = null;
+  let memberId = null; // die Person. Mehrere Geräte (uid) können zur selben Person gehören.
   let snap = emptySnap();
   let opts = null;
   let channel = null;
@@ -137,7 +138,7 @@ const Cloud = (() => {
       fetchAll(() => sb.from('plan_entries').select('*').order('day')),
       sb.from('group_settings').select('data').maybeSingle(),
       sb.from('change_log').select('*').order('at', { ascending: false }).limit(300),
-      sb.from('members').select('user_id, name').order('created_at'),
+      sb.from('members').select('id, name').order('created_at'),
       sb.from('groups').select('code').maybeSingle(),
     ]);
     for (const r of [settingsRes, logRes, membersRes, groupRes]) if (r.error) throw r.error;
@@ -147,10 +148,10 @@ const Cloud = (() => {
     const hasSettings = Boolean(data.settings);
     const plans = { group: {}, mine: {} };
     for (const r of entries) {
-      const target = r.owner === 'group' ? plans.group : r.owner === uid ? plans.mine : null;
+      const target = r.owner === 'group' ? plans.group : r.owner === memberId ? plans.mine : null;
       if (target) target[`${r.day}|${r.slot}`] = entryFromRow(r);
     }
-    const me = membersRes.data.find(m => m.user_id === uid);
+    const me = membersRes.data.find(m => m.id === memberId);
     const state = {
       dishes: dishes.map(dishFromRow),
       plans,
@@ -162,7 +163,7 @@ const Cloud = (() => {
       groupCode: groupRes.data ? groupRes.data.code : '',
       shop: { checked: {}, extras: {} },
     };
-    snap = snapFromState(state, uid, hasSettings);
+    snap = snapFromState(state, memberId, hasSettings);
     writeCache(state);
     return state;
   }
@@ -198,7 +199,7 @@ const Cloud = (() => {
 
   async function pushChanges(state) {
     await uploadPhotos(state);
-    const ops = computeOps(state, snap, uid);
+    const ops = computeOps(state, snap, memberId);
     const check = ({ error }) => { if (error) throw error; };
 
     if (ops.dishUpserts.length) {
@@ -236,7 +237,7 @@ const Cloud = (() => {
       ops.logs.forEach(l => { l.synced = true; });
     }
     if (ops.memberName) {
-      check(await sb.from('members').update({ name: ops.memberName }).eq('user_id', uid));
+      check(await sb.from('members').update({ name: ops.memberName }).eq('id', memberId));
       snap.member = ops.memberName;
     }
     writeCache(state);
@@ -301,7 +302,7 @@ const Cloud = (() => {
   function writeCache(state) {
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify({
-        uid, groupId, state,
+        uid, groupId, memberId, state,
         snap: { dishes: [...snap.dishes], entries: [...snap.entries], settings: snap.settings, member: snap.member },
       }));
     } catch (e) { /* Zwischenspeicher ist optional */ }
@@ -336,10 +337,9 @@ const Cloud = (() => {
     }
 
     try {
-      const { data: m, error } = await sb.from('members').select('group_id').eq('user_id', uid).maybeSingle();
-      if (error) throw error;
-      if (!m) return { needsGroup: true };
-      groupId = m.group_id;
+      const who = await whoAmI();
+      if (!who) return { needsGroup: true };
+      ({ groupId, memberId } = who);
       const state = await load();
       online = true;
       subscribe();
@@ -349,6 +349,7 @@ const Cloud = (() => {
       const cache = readCache();
       if (!cache) throw err;
       groupId = cache.groupId;
+      memberId = cache.memberId;
       snap = {
         dishes: new Map(cache.snap.dishes), entries: new Map(cache.snap.entries),
         settings: cache.snap.settings, member: cache.snap.member,
@@ -365,10 +366,22 @@ const Cloud = (() => {
     uid = data.user.id;
   }
 
-  async function enterGroup() {
-    const { data, error } = await sb.from('members').select('group_id').eq('user_id', uid).single();
+  /* Welche Person ist dieses Gerät, und in welcher Gruppe? null, wenn noch nicht beigetreten. */
+  async function whoAmI() {
+    const { data: device, error } = await sb.from('devices').select('member_id').eq('user_id', uid).maybeSingle();
     if (error) throw error;
-    groupId = data.group_id;
+    if (!device) return null;
+    const { data: member, error: err2 } = await sb.from('members').select('group_id').eq('id', device.member_id).single();
+    if (err2) throw err2;
+    return { memberId: device.member_id, groupId: member.group_id };
+  }
+
+  async function enterGroup() {
+    const who = await whoAmI();
+    if (!who) throw new Error('Beitritt hat nicht geklappt');
+    // Hat sich die Gruppe geändert, die alte Live-Verbindung schließen.
+    if (channel && who.groupId !== groupId) { sb.removeChannel(channel); channel = null; }
+    ({ groupId, memberId } = who);
     snap = emptySnap();
     const state = await load();
     online = true;
@@ -384,18 +397,37 @@ const Cloud = (() => {
     return enterGroup();
   }
 
-  async function joinGroup(code, name) {
+  /* Ruft eine Datenbankfunktion auf. 23503 heißt: Den Nutzer gibt es nicht mehr.
+     Dann einmal frisch anmelden und erneut versuchen. */
+  async function callAsUser(fn, args) {
     await ensureUser();
-    let { error } = await sb.rpc('join_group', { group_code: code, member_name: name });
-    // 23503: Den Nutzer gibt es nicht mehr. Dann einmal frisch anmelden und erneut versuchen.
+    let { data, error } = await sb.rpc(fn, args);
     if (error && error.code === '23503') {
       await sb.auth.signOut({ scope: 'local' });
       uid = null;
       await ensureUser();
-      ({ error } = await sb.rpc('join_group', { group_code: code, member_name: name }));
+      ({ data, error } = await sb.rpc(fn, args));
     }
     if (error) throw error;
+    return data;
+  }
+
+  async function joinGroup(code, name) {
+    await callAsUser('join_group', { group_code: code, member_name: name });
     return enterGroup();
+  }
+
+  /* Gerät mit einer Person verbinden, die auf einem anderen Gerät schon angemeldet ist. */
+  async function pairDevice(code) {
+    await flush();
+    await callAsUser('redeem_pairing_code', { pair_code: code });
+    return enterGroup();
+  }
+
+  async function createPairingCode() {
+    const { data, error } = await sb.rpc('create_pairing_code');
+    if (error) throw error;
+    return data;
   }
 
   const isNetworkError = err => err.name === 'AuthRetryableFetchError' || /fetch|network|Load failed/i.test(String(err.message));
@@ -413,7 +445,7 @@ const Cloud = (() => {
   }
 
   return {
-    enabled, start, createGroup, joinGroup, schedule, flush,
+    enabled, start, createGroup, joinGroup, pairDevice, createPairingCode, schedule, flush,
     isOnline: () => online,
     hasPending: () => Boolean(saveTimer || flushing),
     _test: { computeOps, snapFromState, entryRow, dishRow },

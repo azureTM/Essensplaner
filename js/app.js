@@ -82,7 +82,8 @@ const ui = {
   search: '', tags: new Set(), sort: 'name', notes: [],
   pickSearch: '', detailPersons: null, np: null, editPhoto: null, renderSheet: null,
   randomId: null, folds: new Set(),
-  mustJoin: false, welcomeMode: 'create', welcomeName: '', welcomeCode: '', saveProblem: false,
+  mustJoin: false, welcomeMode: 'create', welcomeName: '', welcomeCode: '', welcomePair: '', saveProblem: false,
+  pairing: { code: null, expires: null, error: null },
 };
 
 /* Das Design gehört zum Gerät, nicht zur Gruppe. */
@@ -732,6 +733,9 @@ function renderMore() {
       <button class="wide" data-a="share-code">Einladung teilen</button>
       <h3 style="margin:12px 0 4px">Mitglieder</h3>
       <ul class="affected">${state.members.map(m => `<li>${esc(m)}${m === me() ? ' (du)' : ''}</li>`).join('')}</ul>
+      <h3 style="margin:12px 0 4px">Geräte</h3>
+      <p class="muted" style="margin-bottom:8px">Nutzt du die App auf mehreren Geräten? Verbinde sie, dann bist du überall dieselbe Person mit demselben „Mein Plan“.</p>
+      <div class="sheet-actions"><button data-a="pair-show">Weiteres Gerät verbinden</button><button data-a="pair-enter">Code eingeben</button></div>
       <form id="renameMe" class="row" style="margin-top:10px"><input id="renameName" class="grow" required maxlength="30" value="${esc(me())}" aria-label="Dein Name"><button>Namen ändern</button></form>
       <p class="muted" style="margin-top:8px">${Cloud.isOnline() ? 'Verbunden. Änderungen sehen alle sofort.' : 'Gerade offline. Änderungen werden gespeichert, sobald wieder Netz da ist.'}</p>`)
     : fold('group', 'Gruppe', me(), `
@@ -757,7 +761,16 @@ function welcomeSheet() {
 const allowNewGroups = () => (window.APP_CONFIG || {}).allowNewGroups !== false;
 
 function cloudWelcomeSheet() {
-  if (!allowNewGroups()) ui.welcomeMode = 'join';
+  if (!allowNewGroups() && ui.welcomeMode === 'create') ui.welcomeMode = 'join';
+  if (ui.welcomeMode === 'pair') {
+    return `<div><h2>Gerät verbinden</h2>
+        <p class="muted">Öffne die App auf dem Gerät, auf dem du schon angemeldet bist. Tippe dort unter „Mehr“ → „Gruppe“ auf „Weiteres Gerät verbinden“ und gib den angezeigten Code hier ein.</p></div>
+      <form id="cloudWelcome" class="stack">
+        <label class="field">Kopplungscode<input data-i="cw-pair" id="cwPair" required maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(ui.welcomePair)}"></label>
+        <button class="primary" id="cwGo">Verbinden</button>
+      </form>
+      <button class="ghost" data-a="welcome-mode" data-mode="join">Zurück</button>`;
+  }
   const join = ui.welcomeMode === 'join';
   return `<div><h2>Willkommen beim Essensplan</h2>
       <p class="muted">${allowNewGroups()
@@ -771,11 +784,53 @@ function cloudWelcomeSheet() {
       <label class="field">Dein Name<input data-i="cw-name" id="cwName" required maxlength="30" autocomplete="given-name" value="${esc(ui.welcomeName)}"></label>
       ${join ? `<label class="field">Gruppencode<input data-i="cw-code" id="cwCode" required maxlength="12" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(ui.welcomeCode)}"></label>` : ''}
       <button class="primary" id="cwGo">${join ? 'Beitreten' : 'Gruppe erstellen'}</button>
-    </form>`;
+    </form>
+    <button class="ghost" data-a="welcome-mode" data-mode="pair">Schon auf einem anderen Gerät dabei? Gerät verbinden</button>`;
+}
+
+/* Kopplungscode anzeigen, den ein weiteres Gerät eingibt. */
+function pairShowSheet() {
+  const p = ui.pairing;
+  let body;
+  if (p.error) body = `<p class="muted">${esc(p.error)}</p>`;
+  else if (!p.code) body = '<p class="muted">Code wird erstellt …</p>';
+  else {
+    const until = new Date(p.expires).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    body = `<p class="pair-code">${esc(p.code)}</p>
+      <p class="muted">Gib diesen Code auf dem anderen Gerät ein: beim Start unter „Gerät verbinden“ oder unter „Mehr“ → „Gruppe“ → „Code eingeben“. Gültig bis ${until} Uhr, nur einmal verwendbar.</p>`;
+  }
+  return `${sheetHead('Weiteres Gerät verbinden')}${body}
+    <button data-a="pair-show">Neuen Code erstellen</button>`;
+}
+
+/* Code von einem anderen Gerät eingeben. Dieses Gerät wird dann zu der Person dort. */
+const pairEnterSheet = () => `${sheetHead('Code eingeben')}
+  <p class="muted">Danach bist du auf diesem Gerät dieselbe Person wie auf dem anderen, mit demselben Namen und demselben „Mein Plan“. Dein bisheriger Eintrag als „${esc(me())}“ wird zusammengeführt.</p>
+  <form id="pairForm" class="stack">
+    <label class="field">Kopplungscode<input id="pairCode" required maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+    <button class="primary" id="pairGo">Verbinden</button>
+  </form>`;
+
+async function submitPairing(code, button, label) {
+  button.disabled = true;
+  button.textContent = 'Verbinde …';
+  try {
+    state = await Cloud.pairDevice(code);
+    ui.mustJoin = false;
+    closeSheet();
+    render();
+    if (location.search) history.replaceState(null, '', location.pathname);
+    toast(`Gerät verbunden. Du bist hier jetzt ${state.me}.`);
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = label;
+    toast(errorText(err));
+  }
 }
 
 function errorText(err) {
   const msg = String((err && err.message) || err || '');
+  if (/Kopplungscode/.test(msg)) return 'Dieser Kopplungscode ist ungültig oder abgelaufen. Lass dir auf dem anderen Gerät einen neuen anzeigen.';
   if (/Gruppencode/.test(msg)) return 'Diesen Gruppencode gibt es nicht. Prüfe ihn bitte noch einmal.';
   if (/permission denied for function create_group/i.test(msg)) return 'Neue Gruppen sind gerade abgeschaltet. Tritt mit einem Gruppencode bei.';
   if (/anonymous/i.test(msg)) return 'Die anonyme Anmeldung ist in Supabase noch nicht eingeschaltet (siehe Anleitung, Schritt 2).';
@@ -785,6 +840,11 @@ function errorText(err) {
 
 async function submitCloudWelcome() {
   const btn = $('#cwGo');
+  if (ui.welcomeMode === 'pair') {
+    const code = $('#cwPair').value.trim();
+    if (code) await submitPairing(code, btn, 'Verbinden');
+    return;
+  }
   const name = $('#cwName').value.trim();
   const join = ui.welcomeMode === 'join';
   const code = join ? $('#cwCode').value.trim() : '';
@@ -810,7 +870,7 @@ async function submitCloudWelcome() {
 function applyRemote(next) {
   state = next;
   render();
-  const editing = sheet.querySelector('#dishForm, #tagForm, #cloudWelcome');
+  const editing = sheet.querySelector('#dishForm, #tagForm, #cloudWelcome, #pairForm');
   if (sheet.open && !editing) refreshSheet();
 }
 
@@ -849,6 +909,17 @@ const actions = {
   },
   reload() { location.reload(); },
   'welcome-mode'(d) { ui.welcomeMode = d.mode; refreshSheet(); },
+  async 'pair-show'() {
+    ui.pairing = { code: null, expires: null, error: null };
+    showSheet(pairShowSheet);
+    try {
+      ui.pairing = { code: await Cloud.createPairingCode(), expires: Date.now() + 10 * 60000, error: null };
+    } catch (err) {
+      ui.pairing = { code: null, expires: null, error: errorText(err) };
+    }
+    if (ui.renderSheet === pairShowSheet) refreshSheet();
+  },
+  'pair-enter'() { showSheet(pairEnterSheet); },
   async 'share-code'() {
     const link = `${location.origin}${location.pathname}?code=${encodeURIComponent(state.groupCode)}`;
     const text = `Tritt unserer Essensplan-Gruppe bei. Gruppencode: ${state.groupCode}\n${link}`;
@@ -1075,6 +1146,7 @@ document.addEventListener('input', e => {
   const key = e.target.dataset && e.target.dataset.i;
   if (key === 'cw-name') ui.welcomeName = e.target.value;
   if (key === 'cw-code') ui.welcomeCode = e.target.value;
+  if (key === 'cw-pair') ui.welcomePair = e.target.value;
   if (key === 'dish-search') { ui.search = e.target.value; $('#dishList').innerHTML = dishListHtml(); }
   if (key === 'pick-search') { ui.pickSearch = e.target.value; $('#pickList').innerHTML = pickerList(e.target.dataset.date, e.target.dataset.slot); }
 });
@@ -1092,6 +1164,10 @@ document.addEventListener('submit', e => {
     $('#extraName').focus();
   }
   if (form.id === 'cloudWelcome') submitCloudWelcome();
+  if (form.id === 'pairForm') {
+    const code = $('#pairCode').value.trim();
+    if (code) submitPairing(code, $('#pairGo'), 'Verbinden');
+  }
   if (form.id === 'renameMe') {
     const name = $('#renameName').value.trim();
     if (!name || name === state.me) return;
