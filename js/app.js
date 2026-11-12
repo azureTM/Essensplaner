@@ -754,14 +754,19 @@ function welcomeSheet() {
     </form>`;
 }
 
+const allowNewGroups = () => (window.APP_CONFIG || {}).allowNewGroups !== false;
+
 function cloudWelcomeSheet() {
+  if (!allowNewGroups()) ui.welcomeMode = 'join';
   const join = ui.welcomeMode === 'join';
   return `<div><h2>Willkommen beim Essensplan</h2>
-      <p class="muted">Erstelle eine neue Gruppe oder tritt mit dem Code bei, den du bekommen hast.</p></div>
-    <div class="seg" role="group" aria-label="Gruppe">
+      <p class="muted">${allowNewGroups()
+        ? 'Erstelle eine neue Gruppe oder tritt mit dem Code bei, den du bekommen hast.'
+        : 'Gib deinen Namen und den Gruppencode ein, den du bekommen hast.'}</p></div>
+    ${allowNewGroups() ? `<div class="seg" role="group" aria-label="Gruppe">
       <button type="button" data-a="welcome-mode" data-mode="create" aria-pressed="${!join}">Neue Gruppe</button>
       <button type="button" data-a="welcome-mode" data-mode="join" aria-pressed="${join}">Mit Code beitreten</button>
-    </div>
+    </div>` : ''}
     <form id="cloudWelcome" class="stack">
       <label class="field">Dein Name<input data-i="cw-name" id="cwName" required maxlength="30" autocomplete="given-name" value="${esc(ui.welcomeName)}"></label>
       ${join ? `<label class="field">Gruppencode<input data-i="cw-code" id="cwCode" required maxlength="12" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(ui.welcomeCode)}"></label>` : ''}
@@ -772,6 +777,7 @@ function cloudWelcomeSheet() {
 function errorText(err) {
   const msg = String((err && err.message) || err || '');
   if (/Gruppencode/.test(msg)) return 'Diesen Gruppencode gibt es nicht. Prüfe ihn bitte noch einmal.';
+  if (/permission denied for function create_group/i.test(msg)) return 'Neue Gruppen sind gerade abgeschaltet. Tritt mit einem Gruppencode bei.';
   if (/anonymous/i.test(msg)) return 'Die anonyme Anmeldung ist in Supabase noch nicht eingeschaltet (siehe Anleitung, Schritt 2).';
   if (/fetch|network|Load failed/i.test(msg)) return 'Keine Verbindung zum Server. Prüfe die Internetverbindung.';
   return `Das hat nicht geklappt: ${msg}`;

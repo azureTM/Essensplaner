@@ -49,6 +49,16 @@ Beides in `js/config.js` eintragen oder mir schicken. Der Publishable key darf �
    - **Android (Chrome):** Menü (⋮) → **App installieren** bzw. **Zum Startbildschirm hinzufügen**
    - **iPhone (Safari):** Teilen-Symbol → **Zum Home-Bildschirm**
 
+## Neue Gruppen sperren
+
+Sobald eure Gruppe existiert, im **SQL Editor** ausführen. Danach kann niemand mehr neue Gruppen anlegen, beitreten geht weiter nur mit Code:
+
+```sql
+revoke execute on function public.create_group(text) from authenticated;
+```
+
+Wieder erlauben mit `grant execute on function public.create_group(text) to authenticated;` und in `js/config.js` dazu `allowNewGroups: true` setzen.
+
 ## Gut zu wissen
 
 - **Pause im kostenlosen Plan:** Wird die App etwa eine Woche lang von niemandem geöffnet, pausiert Supabase das Projekt. Im Supabase-Dashboard lässt es sich mit einem Klick wieder starten, die Daten bleiben erhalten.

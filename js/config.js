@@ -5,4 +5,7 @@
 window.APP_CONFIG = {
   supabaseUrl: 'https://mfndnjxqxvytdwzvruzm.supabase.co',
   supabaseKey: 'sb_publishable_oV9lYE4b_fYLOay_yGeJRg_5KEyfDS-',
+  // false: Neue Gruppen lassen sich nicht mehr erstellen, nur noch beitreten.
+  // Die eigentliche Sperre liegt in Supabase (siehe ANLEITUNG.md), das hier blendet nur den Button aus.
+  allowNewGroups: false,
 };
